@@ -17,13 +17,13 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { existsSync, readFileSync } from 'fs';
-import { basename, extname, join, resolve } from 'path';
+import { existsSync, mkdirSync, readFileSync } from 'fs';
+import { basename, dirname, extname, join, resolve } from 'path';
 import { createContext, runInContext } from 'vm';
-import { AbstractDatabaseClient, type WriteResult } from './DatabaseClient';
 import type { IConfig } from '../../types';
+import { AbstractDatabaseClient, type WriteResult } from './DatabaseClient';
 
-const MIGRATIONS_DIR = resolve(__dirname, './migrations');
+const MIGRATIONS_DIR = resolve(__dirname, './migrations/sqlite');
 
 /**
  * Ordered list of [threshold_version, files[]] pairs.
@@ -75,6 +75,9 @@ const AVAILABLE_MIGRATIONS: [number, string[]][] = [
     [40, ['0044_dev-center-godmode.sql']],
     [41, ['0045_user_oidc_providers.sql']],
     [42, ['0046_is-private-apps.sql']],
+    [43, ['0047_app-url-updates.sql']],
+    [44, ['0048_old-app-names-unique-tuple.sql']],
+    [45, ['0049_music-player-pdf-player-updates.sql']],
 ];
 
 export class SqliteDatabaseClient extends AbstractDatabaseClient {
@@ -94,8 +97,14 @@ export class SqliteDatabaseClient extends AbstractDatabaseClient {
     override async onServerStart(): Promise<void> {
         const Database = (await import('better-sqlite3')).default;
 
-        const dbPath = this.config.database?.path ?? ':memory:';
+        const dbPath = this.config.database?.inMemory
+            ? ':memory:'
+            : (this.config.database?.path ?? ':memory:');
         const isNew = dbPath === ':memory:' || !existsSync(dbPath);
+
+        if (dbPath !== ':memory:') {
+            mkdirSync(dirname(dbPath), { recursive: true });
+        }
 
         this.db = new Database(dbPath);
 
@@ -143,6 +152,7 @@ export class SqliteDatabaseClient extends AbstractDatabaseClient {
 
         return {
             insertId: info.lastInsertRowid,
+            affectedRows: info.changes,
             anyRowsAffected: info.changes > 0,
         };
     }
@@ -450,6 +460,13 @@ export class SqliteDatabaseClient extends AbstractDatabaseClient {
             {
                 version: 43,
                 check: () => this.hasColumn('apps', 'is_private'),
+            },
+            {
+                version: 44,
+                check: () =>
+                    this.hasRow(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'old_app_names' AND sql LIKE '%UNIQUE%app_uid%name%'",
+                    ),
             },
         ];
 

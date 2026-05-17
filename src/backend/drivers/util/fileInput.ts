@@ -25,6 +25,7 @@ import { expandTildePath, resolveNode } from '../../services/fs/resolveNode.js';
 import type { FSEntryStore } from '../../stores/fs/FSEntryStore.js';
 import type { S3ObjectStore } from '../../stores/fs/S3ObjectStore.js';
 import { mimeFromName } from '../../util/fileSigning.js';
+import { secureFetch } from '../../util/secureHttp.js';
 
 /**
  * Resolve a file-like input sent through the drivers API into a Buffer.
@@ -32,6 +33,7 @@ import { mimeFromName } from '../../util/fileSigning.js';
  * puter-js sends driver args as plain JSON (no multipart). `audio`, `source`,
  * and similar file fields arrive as one of:
  *   • a data URL string (`data:image/png;base64,...`)
+ *   • a web URL string (`https://example.com/image.png`)
  *   • a plain path string (`/alice/music/sample.mp3`)
  *   • an object with `{ path?, uid?, uuid? }`
  *
@@ -62,19 +64,26 @@ export async function loadFileInput(
     fsService: FSService,
     actor: Actor,
     input: unknown,
-    options: { maxBytes?: number } = {},
+    options: { maxBytes?: number; acceptWebInput?: true } = {},
 ): Promise<LoadedFile> {
     if (!input) {
-        throw new HttpError(400, 'Missing file input');
+        throw new HttpError(400, 'Missing file input', {
+            legacyCode: 'bad_request',
+        });
     }
     if (!Number.isFinite(Number(actor?.user?.id ?? NaN))) {
-        throw new HttpError(401, 'Unauthorized');
+        throw new HttpError(401, 'Unauthorized', {
+            legacyCode: 'unauthorized',
+        });
     }
 
     // Data URL — decode base64/plain inline.
     if (typeof input === 'string' && input.startsWith('data:')) {
         const match = DATA_URL_PATTERN.exec(input);
-        if (!match) throw new HttpError(400, 'Invalid data URL');
+        if (!match)
+            throw new HttpError(400, 'Invalid data URL', {
+                legacyCode: 'bad_request',
+            });
         const mime = match[1] ?? 'application/octet-stream';
         const encoding = (match[2] ?? '').trim();
         const payload = match[3] ?? '';
@@ -86,6 +95,36 @@ export async function loadFileInput(
         return {
             buffer,
             filename: filenameFromMime(mime),
+            mimeType: mime,
+            fsEntry: null,
+        };
+    }
+
+    // Web URL — fetch via SSRF-guarded secureFetch.
+    if (
+        typeof input === 'string' &&
+        (input.startsWith('https://') || input.startsWith('http://')) &&
+        options.acceptWebInput
+    ) {
+        const response = await secureFetch(input);
+        if (!response.ok) {
+            throw new HttpError(
+                400,
+                `Failed to fetch URL (status ${response.status})`,
+                { legacyCode: 'bad_request' },
+            );
+        }
+        const arrayBuf = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuf);
+        assertMax(buffer, options.maxBytes);
+        const contentType = response.headers.get('content-type');
+        const mime =
+            contentType?.split(';')[0]?.trim() ||
+            mimeFromName(input) ||
+            'application/octet-stream';
+        return {
+            buffer,
+            filename: inferFilenameFromUrlOrPath(input),
             mimeType: mime,
             fsEntry: null,
         };
@@ -118,13 +157,17 @@ export async function loadFileInput(
               })();
 
     const entry = await resolveNode(stores.fsEntry, ref, { required: true });
-    if (!entry) throw new HttpError(404, 'File not found');
+    if (!entry)
+        throw new HttpError(404, 'File not found', { legacyCode: 'not_found' });
     if (entry.isDir)
-        throw new HttpError(400, 'Expected a file, got a directory');
+        throw new HttpError(400, 'Expected a file, got a directory', {
+            legacyCode: 'bad_request',
+        });
     if (entry.isShortcut || entry.isSymlink) {
         throw new HttpError(
             400,
             'Cannot load content of a symlink or shortcut directly',
+            { legacyCode: 'shortcut_target_not_found' },
         );
     }
     // ACL gate: resolveNode does global UID/UUID/ID/path lookups, no

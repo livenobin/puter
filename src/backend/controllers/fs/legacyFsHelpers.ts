@@ -23,9 +23,9 @@ import type { FSEntry } from '../../stores/fs/FSEntry.js';
 import type { FSEntryStore } from '../../stores/fs/FSEntryStore.js';
 import type { FSService } from '../../services/fs/FSService.js';
 import type { ACLService, AclMode } from '../../services/acl/ACLService.js';
-import type { Actor } from '../../core/actor.js';
+import { isAppActor, type Actor } from '../../core/actor.js';
 import { Context } from '../../core/context.js';
-import type { EventClient } from '../../clients/EventClient.js';
+import type { EventClient } from '../../clients/event/EventClient.js';
 import { HttpError } from '../../core/http/HttpError.js';
 import {
     resolveNode,
@@ -110,7 +110,10 @@ export async function resolveV1Selector(
             ? { path: expandTildePath(raw, username) }
             : { uid: raw };
         const entry = await resolveNode(fsEntryStore, ref, { required: true });
-        if (!entry) throw new HttpError(404, `Entry not found: ${raw}`);
+        if (!entry)
+            throw new HttpError(404, `Entry not found: ${raw}`, {
+                legacyCode: 'not_found',
+            });
         return entry;
     }
 
@@ -125,7 +128,10 @@ export async function resolveV1Selector(
             { path: childPath },
             { required: true },
         );
-        if (!child) throw new HttpError(404, `Entry not found: ${childPath}`);
+        if (!child)
+            throw new HttpError(404, `Entry not found: ${childPath}`, {
+                legacyCode: 'not_found',
+            });
         return child;
     }
 
@@ -147,7 +153,10 @@ export async function resolveV1Selector(
                 : undefined,
     };
     const entry = await resolveNode(fsEntryStore, ref, { required: true });
-    if (!entry) throw new HttpError(404, 'Entry not found');
+    if (!entry)
+        throw new HttpError(404, 'Entry not found', {
+            legacyCode: 'not_found',
+        });
     return entry;
 }
 
@@ -193,8 +202,8 @@ export async function assertAccess(
     // App-under-user actors see denials as 404 "subject_does_not_exist"
     // so existence of a sibling user's / other-app's files isn't leaked
     // through the error code. User-actor denials keep the real 403.
-    const isAppActor = Boolean((actor as { app?: unknown })?.app);
-    if (isAppActor) {
+
+    if (isAppActor(actor)) {
         throw new HttpError(404, `Entry not found: path=${path}`, {
             legacyCode: 'subject_does_not_exist',
         });
@@ -208,6 +217,48 @@ export async function assertAccess(
     throw new HttpError(403, message, {
         legacyCode: legacyCode ?? 'access_denied',
     });
+}
+
+/**
+ * Authorize creation of a new entry at `targetPath`. The standard rule is
+ * write on the parent, but we also allow it when the actor has explicit
+ * write on the target itself — this covers an app creating its own
+ * `/<user>/AppData/<app_uid>` folder (parent `AppData` is off-limits, but
+ * the target is the app's own subtree per ACLService's short-circuit) and
+ * shares granted directly on a not-yet-created path.
+ *
+ * On failure, delegates to `assertAccess` on the parent so the error
+ * shape stays identical to the previous parent-only check.
+ */
+export async function assertCanCreate(
+    aclService: ACLService,
+    fsService: FSService,
+    actor: Actor,
+    targetPath: string,
+): Promise<void> {
+    const parent = pathPosix.dirname(targetPath);
+    const parentForCheck = parent === '/' ? targetPath : parent;
+
+    const makeDescriptor = (path: string) => {
+        let cache: Promise<Array<{ uid: string; path: string }>> | null = null;
+        return {
+            path,
+            resolveAncestors() {
+                if (!cache) cache = fsService.getAncestorChain(path);
+                return cache;
+            },
+        };
+    };
+
+    if (
+        await aclService.check(actor, makeDescriptor(parentForCheck), 'write')
+    ) {
+        return;
+    }
+    if (await aclService.check(actor, makeDescriptor(targetPath), 'write')) {
+        return;
+    }
+    await assertAccess(aclService, fsService, actor, parentForCheck, 'write');
 }
 
 // ── Response shaping ────────────────────────────────────────────────
@@ -423,12 +474,14 @@ export function signingConfigFromAppConfig(config: IConfig): SigningConfig {
         throw new HttpError(
             500,
             'Server misconfiguration: url_signature_secret not set',
+            { legacyCode: 'internal_error' },
         );
     }
     if (typeof apiBaseUrl !== 'string' || apiBaseUrl.length === 0) {
         throw new HttpError(
             500,
             'Server misconfiguration: api_base_url not set',
+            { legacyCode: 'internal_error' },
         );
     }
     return { secret, apiBaseUrl };

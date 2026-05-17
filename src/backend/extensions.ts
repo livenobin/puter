@@ -19,9 +19,15 @@
 
 import type { RequestHandler } from 'express';
 import type { puterClients } from './clients';
-import type { IPuterClientRegistry } from './clients/types';
+import type {
+    IExtensionClientInstances,
+    IPuterClientRegistry,
+} from './clients/types';
 import type { puterControllers } from './controllers';
-import type { IPuterControllerRegistry } from './controllers/types';
+import type {
+    IExtensionControllerInstances,
+    IPuterControllerRegistry,
+} from './controllers/types';
 import type {
     RouteDescriptor,
     RouteMethod,
@@ -29,7 +35,10 @@ import type {
     RoutePath,
 } from './core/http/types';
 import type { puterDrivers } from './drivers';
-import type { IPuterDriverRegistry } from './drivers/types';
+import type {
+    IExtensionDriverInstances,
+    IPuterDriverRegistry,
+} from './drivers/types';
 import {
     clientsContainers,
     configContainer,
@@ -39,9 +48,15 @@ import {
     storesContainers,
 } from './exports';
 import type { puterServices } from './services';
-import type { IPuterServiceRegistry } from './services/types';
+import type {
+    IExtensionServiceInstances,
+    IPuterServiceRegistry,
+} from './services/types';
 import type { puterStores } from './stores';
-import type { IPuterStoreRegistry } from './stores/types';
+import type {
+    IExtensionStoreInstances,
+    IPuterStoreRegistry,
+} from './stores/types';
 import type { IConfig, LayerInstances } from './types';
 
 /**
@@ -56,8 +71,10 @@ export const extensionStore = {
     controllers: {} as IPuterControllerRegistry,
     drivers: {} as IPuterDriverRegistry,
     globalMiddlewares: [] as RequestHandler[],
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    events: {} as Record<string, ((...args: any[]) => void)[]>,
+    events: {} as Record<
+        string,
+        ((key: string, data: unknown, meta: unknown) => void)[]
+    >,
     /**
      * Extension-declared routes. Shape matches the controller-layer
      * `RouteDescriptor`, so both flow through the same materializer
@@ -192,8 +209,11 @@ export const extension = {
 
     // ── Event subscription ───────────────────────────────────────────
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    on: (event: string, handler: (...args: any[]) => void) => {
+    on: (
+        event: string,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        handler: (key: string, data: any, meta: any) => void,
+    ) => {
         if (!extensionStore.events[event]) {
             extensionStore.events[event] = [];
         }
@@ -262,15 +282,17 @@ export const extension = {
     import: <S extends string>(
         name: S,
     ): S extends 'client'
-        ? LayerInstances<typeof puterClients>
+        ? LayerInstances<typeof puterClients> & IExtensionClientInstances
         : S extends 'store'
-          ? LayerInstances<typeof puterStores>
+          ? LayerInstances<typeof puterStores> & IExtensionStoreInstances
           : S extends 'service'
-            ? LayerInstances<typeof puterServices>
+            ? LayerInstances<typeof puterServices> & IExtensionServiceInstances
             : S extends 'controller'
-              ? LayerInstances<typeof puterControllers>
+              ? LayerInstances<typeof puterControllers> &
+                    IExtensionControllerInstances
               : S extends 'driver'
-                ? LayerInstances<typeof puterDrivers>
+                ? LayerInstances<typeof puterDrivers> &
+                      IExtensionDriverInstances
                 : never => {
         switch (name) {
             case 'client': {
@@ -281,6 +303,7 @@ export const extension = {
                             const proxyProxyHandler = {
                                 get: (_target2: object, prop2: string) => {
                                     const proxiedObj2 =
+                                        // @ts-expect-error any type needed
                                         clientsContainers[prop][prop2];
                                     if (!proxiedObj2) {
                                         throw new Error(
@@ -307,6 +330,7 @@ export const extension = {
                             const proxyProxyHandler = {
                                 get: (_target2: object, prop2: string) => {
                                     const proxiedObj2 =
+                                        // @ts-expect-error any type needed
                                         clientsContainers[prop][prop2];
                                     if (!proxiedObj2) {
                                         throw new Error(
@@ -333,6 +357,7 @@ export const extension = {
                             const proxyProxyHandler = {
                                 get: (_target2: object, prop2: string) => {
                                     const proxiedObj2 =
+                                        // @ts-expect-error any type needed
                                         clientsContainers[prop][prop2];
                                     if (!proxiedObj2) {
                                         throw new Error(
@@ -359,6 +384,7 @@ export const extension = {
                             const proxyProxyHandler = {
                                 get: (_target2: object, prop2: string) => {
                                     const proxiedObj2 =
+                                        // @ts-expect-error any type needed
                                         clientsContainers[prop][prop2];
                                     if (!proxiedObj2) {
                                         throw new Error(
@@ -385,6 +411,7 @@ export const extension = {
                             const proxyProxyHandler = {
                                 get: (_target2: object, prop2: string) => {
                                     const proxiedObj2 =
+                                        // @ts-expect-error any type needed
                                         clientsContainers[prop][prop2];
                                     if (!proxiedObj2) {
                                         throw new Error(

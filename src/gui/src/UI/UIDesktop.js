@@ -646,10 +646,10 @@ async function UIDesktop (options) {
     // Desktop
     // If desktop is not in fullpage/embedded mode, we hide it until files and directories are loaded and then fade in the UI
     // This gives a calm and smooth experience for the user
-    h += `<div class="desktop item-container disable-user-select" 
-                data-uid="${options.desktop_fsentry.uid}" 
-                data-sort_by="${!options.desktop_fsentry.sort_by ? 'name' : options.desktop_fsentry.sort_by}" 
-                data-sort_order="${!options.desktop_fsentry.sort_order ? 'asc' : options.desktop_fsentry.sort_order}" 
+    h += `<div class="desktop item-container disable-user-select"
+                data-uid="${options.desktop_fsentry?.uid ?? ''}"
+                data-sort_by="${!options.desktop_fsentry?.sort_by ? 'name' : options.desktop_fsentry.sort_by}"
+                data-sort_order="${!options.desktop_fsentry?.sort_order ? 'asc' : options.desktop_fsentry.sort_order}"
                 data-path="${html_encode(window.desktop_path)}"
             >`;
 
@@ -693,19 +693,10 @@ async function UIDesktop (options) {
         console.error('Error loading language', e);
     }
 
-    // clock_visible
-    let clock_visible = 'auto';
-    try {
-        clock_visible = await puter.kv.get('user_preferences.clock_visible');
-    } catch (e) {
-        console.error('Error loading clock_visible', e);
-    }
-
     // update local user preferences
     const user_preferences = {
         show_hidden_files: show_hidden_files,
         language: language,
-        clock_visible: clock_visible,
     };
 
     // update default apps
@@ -1182,7 +1173,7 @@ async function UIDesktop (options) {
     // logo
     ht += `<div class="toolbar-btn toolbar-puter-logo" title="Puter" style="margin-left: 10px;"><img src="${window.icons['logo-white.svg']}" draggable="false" style="display:block; width:17px; height:17px"></div>`;
 
-    // clock spacer
+    // spacer to push items to the right
     ht += '<div class="toolbar-spacer"></div>';
 
     // create account button
@@ -1190,17 +1181,7 @@ async function UIDesktop (options) {
     ht += '<svg style="width: 17px; height: 17px;" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" width="48px" height="48px" viewBox="0 0 48 48"><g transform="translate(0, 0)"><path d="M45.521,39.04L27.527,5.134c-1.021-1.948-3.427-2.699-5.375-1.679-.717,.376-1.303,.961-1.679,1.679L2.479,39.04c-.676,1.264-.635,2.791,.108,4.017,.716,1.207,2.017,1.946,3.42,1.943H41.993c1.403,.003,2.704-.736,3.42-1.943,.743-1.226,.784-2.753,.108-4.017ZM23.032,15h1.937c.565,0,1.017,.467,1,1.031l-.438,14c-.017,.54-.459,.969-1,.969h-1.062c-.54,0-.983-.429-1-.969l-.438-14c-.018-.564,.435-1.031,1-1.031Zm.968,25c-1.657,0-3-1.343-3-3s1.343-3,3-3,3,1.343,3,3-1.343,3-3,3Z" fill="#ffbb00"></path></g></svg>';
     ht += '</div>';
 
-    // 'Show Desktop'
-    ht += `<a href="/" class="show-desktop-btn toolbar-btn antialiased hidden" target="_blank" title="${i18n('desktop_show_desktop')}">${i18n('desktop_show_desktop')} <img src="${window.icons['launch-white.svg']}" style="width: 10px; height: 10px; margin-left: 5px;"></a>`;
 
-    // github
-    ht += `<a href="https://github.com/HeyPuter/puter" target="_blank" class="toolbar-btn" title="${i18n('toolbar.github')}" style="background-image:url(${window.icons['logo-github-white.svg']});"></a>`;
-
-    // do not show the fullscreen button on mobile devices since it's broken
-    if ( ! isMobile.phone ) {
-        // fullscreen button
-        ht += `<div class="toolbar-btn fullscreen-btn" title="${i18n('toolbar.enter_fullscreen')}" style="background-image:url(${window.icons['fullscreen.svg']})"></div>`;
-    }
 
     // qr code button -- only show if not embedded
     if ( ! window.is_embedded )
@@ -1210,9 +1191,6 @@ async function UIDesktop (options) {
 
     // search button
     ht += `<div class="toolbar-btn search-btn" title="${i18n('toolbar.search')}" style="background-image:url('${window.icons['search.svg']}')"></div>`;
-
-    //clock
-    ht += '<div id="clock" class="toolbar-clock" style="">12:00 AM Sun, Jan 01</div>';
 
     // user options menu
     ht += '<div class="toolbar-btn user-options-menu-btn profile-pic" style="display:block;">';
@@ -1235,8 +1213,6 @@ async function UIDesktop (options) {
 
     // send event
     window.dispatchEvent(new CustomEvent('toolbar:ready'));
-    // init clock visibility
-    window.change_clock_visible();
 
     // notification container
     $('body').append(`<div class="notification-container"><div class="notifications-close-all">${i18n('close_all')}</div></div>`);
@@ -1271,18 +1247,16 @@ async function UIDesktop (options) {
     // i.e. https://puter.com/app/<app_name>
     //--------------------------------------------------------------------------------------
     if ( window.url_paths[0]?.toLocaleLowerCase() === 'app' && window.url_paths[1] ) {
-        window.app_launched_from_url = window.url_paths[1];
-        // get app metadata
-        try {
-            window.app_launched_from_url = await puter.apps.get(window.url_paths[1], { icon_size: 64 });
-            window.is_fullpage_mode = window.app_launched_from_url.metadata?.fullpage_on_landing ?? window.is_fullpage_mode ?? false;
-
-            // show 'Show Desktop' button
-            if ( window.is_fullpage_mode ) {
-                $('.show-desktop-btn').removeClass('hidden');
+        // If app metadata was already fetched early (for fullpage detection), reuse it
+        if ( !window.app_launched_from_url?.name ) {
+            window.app_launched_from_url = window.url_paths[1];
+            // get app metadata
+            try {
+                window.app_launched_from_url = await puter.apps.get(window.url_paths[1], { icon_size: 64 });
+                window.is_fullpage_mode = window.app_launched_from_url.metadata?.fullpage_on_landing ?? window.is_fullpage_mode ?? false;
+            } catch (e) {
+                console.error('UIDesktop app path launch error', e);
             }
-        } catch (e) {
-            console.error('UIDesktop app path launch error', e);
         }
 
         // get query params, any param that doesn't start with 'puter.' will be passed to the app
@@ -1373,34 +1347,6 @@ async function UIDesktop (options) {
         $('.window-menubar-global').hide();
     });
 
-    function display_ct () {
-
-        var x = new Date();
-        var ampm = x.getHours() >= 12 ? ' PM' : ' AM';
-        let hours = x.getHours() % 12;
-        hours = hours ? hours : 12;
-        hours = hours.toString().length == 1 ? 0 + hours.toString() : hours;
-
-        var minutes = x.getMinutes().toString();
-        minutes = minutes.length == 1 ? 0 + minutes : minutes;
-
-        var seconds = x.getSeconds().toString();
-        seconds = seconds.length == 1 ? 0 + seconds : seconds;
-
-        var month = x.toLocaleString('default', { month: 'short' });
-
-        var dt = x.getDate().toString();
-        dt = dt.length == 1 ? 0 + dt : dt;
-
-        var day = x.toLocaleString('default', { weekday: 'short' });
-
-        var x1 = `${day }, ${ month } ${ dt}`;
-        x1 = `${hours }:${ minutes }${ampm } ${ x1}`;
-        $('#clock').html(x1);
-    }
-    display_ct();
-    setInterval(display_ct, 1000);
-
     window.hide_toolbar = (animate = true) => {
         // Always show toolbar on mobile and tablet devices
         if ( isMobile.phone || isMobile.tablet ) {
@@ -1430,13 +1376,13 @@ async function UIDesktop (options) {
                 width: '40px',
             });
         }
-        // animate hide toolbar-btn, toolbar-clock
+        // animate hide toolbar buttons
         if ( animate ) {
-            $('.toolbar-btn, #clock, .user-options-menu-btn').animate({
+            $('.toolbar-btn, .user-options-menu-btn').animate({
                 opacity: 0,
             }, 10);
         } else {
-            $('.toolbar-btn, #clock, .user-options-menu-btn').css({
+            $('.toolbar-btn, .user-options-menu-btn').css({
                 opacity: 0,
             });
         }
@@ -1461,8 +1407,8 @@ async function UIDesktop (options) {
             top: 0,
         }, 100).css('width', 'max-content');
 
-        // animate show toolbar-btn, toolbar-clock
-        $('.toolbar-btn, #clock, .user-options-menu-btn').animate({
+        // animate show toolbar buttons
+        $('.toolbar-btn, .user-options-menu-btn').animate({
             opacity: 0.8,
         }, 50);
     };
@@ -2188,16 +2134,6 @@ $(document).on('click', '.user-options-menu-btn', async function (e) {
                 },
             },
             //--------------------------------------------------
-            // Keyboard Shortcuts
-            //--------------------------------------------------
-            {
-                html: i18n('keyboard_shortcuts'),
-                id: 'keyboard_shortcuts',
-                onClick: async function () {
-                    window.open('/dashboard', '_blank');
-                },
-            },
-            //--------------------------------------------------
             // My Websites
             //--------------------------------------------------
             {
@@ -2269,31 +2205,6 @@ $(document).on('click', '.user-options-menu-btn', async function (e) {
     });
 });
 
-$(document).on('click', '.fullscreen-btn', async function (e) {
-    if ( ! window.is_fullscreen() ) {
-        var elem = document.documentElement;
-        if ( elem.requestFullscreen ) {
-            elem.requestFullscreen();
-        } else if ( elem.webkitRequestFullscreen ) { /* Safari */
-            elem.webkitRequestFullscreen();
-        } else if ( elem.mozRequestFullScreen ) { /* moz */
-            elem.mozRequestFullScreen();
-        } else if ( elem.msRequestFullscreen ) { /* IE11 */
-            elem.msRequestFullscreen();
-        }
-    }
-    else {
-        if ( document.exitFullscreen ) {
-            document.exitFullscreen();
-        } else if ( document.webkitExitFullscreen ) {
-            document.webkitExitFullscreen();
-        } else if ( document.mozCancelFullScreen ) {
-            document.mozCancelFullScreen();
-        } else if ( document.msExitFullscreen ) {
-            document.msExitFullscreen();
-        }
-    }
-});
 
 $(document).on('click', '.close-launch-popover', function () {
     $('.launch-popover').closest('.popover').fadeOut(200, function () {
@@ -2411,21 +2322,6 @@ $(document).on('click', '.launch-search-clear', function (e) {
     $('.launch-search').focus();
 });
 
-document.addEventListener('fullscreenchange', (event) => {
-    // document.fullscreenElement will point to the element that
-    // is in fullscreen mode if there is one. If there isn't one,
-    // the value of the property is null.
-
-    if ( document.fullscreenElement ) {
-        $('.fullscreen-btn').css('background-image', `url(${window.icons['shrink.svg']})`);
-        $('.fullscreen-btn').attr('title', i18n('desktop_exit_full_screen'));
-        window.user_preferences.clock_visible === 'auto' && $('#clock').show();
-    } else {
-        $('.fullscreen-btn').css('background-image', `url(${window.icons['fullscreen.svg']})`);
-        $('.fullscreen-btn').attr('title', i18n('desktop_enter_full_screen'));
-        window.user_preferences.clock_visible === 'auto' && $('#clock').hide();
-    }
-});
 
 window.set_desktop_background = function (options) {
     if ( options.fit ) {
@@ -2531,9 +2427,6 @@ window.exit_fullpage_mode = (el_window) => {
 
     // reset dektop height to take into account the taskbar height
     $('.desktop').css('height', `calc(100vh - ${window.taskbar_height + window.toolbar_height}px)`);
-
-    // hide the 'Show Desktop' button in toolbar
-    $('.show-desktop-btn').hide();
 
     // refresh desktop background
     window.refresh_desktop_background();

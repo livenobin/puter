@@ -19,6 +19,7 @@
 
 import { statfs } from 'node:fs/promises';
 import { posix as pathPosix } from 'node:path';
+import { assertNormalized } from '../../services/fs/resolveNode.js';
 import { v4 as uuidv4 } from 'uuid';
 import { HttpError } from '../../core/http/HttpError.js';
 import type { LayerInstances } from '../../types.js';
@@ -170,10 +171,13 @@ export class FSEntryStore extends PuterStore {
     #normalizePath(path: string): string {
         const trimmed = path.trim();
         if (trimmed.length === 0) {
-            throw new HttpError(400, 'Path cannot be empty');
+            throw new HttpError(400, 'Path cannot be empty', {
+                legacyCode: 'bad_request',
+            });
         }
 
-        let normalized = pathPosix.normalize(trimmed);
+        assertNormalized(trimmed);
+        let normalized = trimmed;
         if (!normalized.startsWith('/')) {
             normalized = `/${normalized}`;
         }
@@ -626,7 +630,9 @@ export class FSEntryStore extends PuterStore {
         for (const path of candidatePaths) {
             const entry = allEntries.get(path);
             if (entry && !entry.isDir) {
-                throw new HttpError(409, `Path is not a directory: ${path}`);
+                throw new HttpError(409, `Path is not a directory: ${path}`, {
+                    legacyCode: 'conflict',
+                });
             }
         }
 
@@ -666,6 +672,7 @@ export class FSEntryStore extends PuterStore {
                         throw new HttpError(
                             409,
                             `Path is not a directory: ${parentPath}`,
+                            { legacyCode: 'conflict' },
                         );
                     }
 
@@ -727,6 +734,7 @@ export class FSEntryStore extends PuterStore {
                         throw new HttpError(
                             409,
                             `Path is not a directory: ${path}`,
+                            { legacyCode: 'conflict' },
                         );
                     }
                     if (expectedUuidByPath.get(path) === insertedEntry.uuid) {
@@ -748,6 +756,7 @@ export class FSEntryStore extends PuterStore {
                 throw new HttpError(
                     409,
                     `Path is not a directory: ${requiredPath}`,
+                    { legacyCode: 'conflict' },
                 );
             }
             requiredEntryMap.set(requiredPath, entry);
@@ -772,6 +781,7 @@ export class FSEntryStore extends PuterStore {
                 throw new HttpError(
                     409,
                     `Path is not a directory: ${normalizedPath}`,
+                    { legacyCode: 'conflict' },
                 );
             }
             return existingEntry;
@@ -781,11 +791,14 @@ export class FSEntryStore extends PuterStore {
             throw new HttpError(
                 404,
                 `Parent path does not exist: ${normalizedPath}`,
+                { legacyCode: 'not_found' },
             );
         }
 
         if (normalizedPath === '/') {
-            throw new HttpError(400, 'Cannot create root directory');
+            throw new HttpError(400, 'Cannot create root directory', {
+                legacyCode: 'bad_request',
+            });
         }
 
         const parentPath = pathPosix.dirname(normalizedPath);
@@ -857,6 +870,7 @@ export class FSEntryStore extends PuterStore {
             throw new HttpError(
                 409,
                 `Path is not a directory: ${normalizedPath}`,
+                { legacyCode: 'conflict' },
             );
         }
 
@@ -1327,6 +1341,7 @@ export class FSEntryStore extends PuterStore {
                 throw new HttpError(
                     404,
                     'File entry was not found for thumbnail update',
+                    { legacyCode: 'not_found' },
                 );
             }
 
@@ -1340,6 +1355,7 @@ export class FSEntryStore extends PuterStore {
                 throw new HttpError(
                     404,
                     'File entry was not found for thumbnail update',
+                    { legacyCode: 'not_found' },
                 );
             }
         }
@@ -1353,6 +1369,7 @@ export class FSEntryStore extends PuterStore {
             throw new HttpError(
                 404,
                 'File entry was not found for thumbnail update',
+                { legacyCode: 'not_found' },
             );
         }
 
@@ -1450,12 +1467,14 @@ export class FSEntryStore extends PuterStore {
                 throw new HttpError(
                     404,
                     `Parent path does not exist: ${normalizedPath}`,
+                    { legacyCode: 'not_found' },
                 );
             }
             if (!parentEntry.isDir) {
                 throw new HttpError(
                     409,
                     `Path is not a directory: ${normalizedPath}`,
+                    { legacyCode: 'conflict' },
                 );
             }
             return parentEntry;
@@ -1495,7 +1514,9 @@ export class FSEntryStore extends PuterStore {
         const normalizedRequests = requests.map((request) => {
             const normalizedPath = this.#normalizePath(request.path);
             if (normalizedPath === '/') {
-                throw new HttpError(400, 'Cannot create root directory');
+                throw new HttpError(400, 'Cannot create root directory', {
+                    legacyCode: 'bad_request',
+                });
             }
             return {
                 path: normalizedPath,
@@ -1523,12 +1544,14 @@ export class FSEntryStore extends PuterStore {
                 throw new HttpError(
                     404,
                     `Directory path does not exist: ${request.path}`,
+                    { legacyCode: 'not_found' },
                 );
             }
             if (!entry.isDir) {
                 throw new HttpError(
                     409,
                     `Path is not a directory: ${request.path}`,
+                    { legacyCode: 'conflict' },
                 );
             }
             return entry;
@@ -1563,7 +1586,9 @@ export class FSEntryStore extends PuterStore {
             (entryInput, index) => {
                 const targetPath = this.#normalizePath(entryInput.path);
                 if (targetPath === '/') {
-                    throw new HttpError(400, 'Cannot write to root path');
+                    throw new HttpError(400, 'Cannot write to root path', {
+                        legacyCode: 'cannot_write_to_root',
+                    });
                 }
 
                 const parentPath = this.#normalizePath(
@@ -1573,6 +1598,7 @@ export class FSEntryStore extends PuterStore {
                     throw new HttpError(
                         400,
                         'Cannot write directly under root path',
+                        { legacyCode: 'bad_request' },
                     );
                 }
 
@@ -1581,6 +1607,7 @@ export class FSEntryStore extends PuterStore {
                     throw new HttpError(
                         400,
                         `Invalid size for path ${targetPath}`,
+                        { legacyCode: 'bad_request' },
                     );
                 }
 
@@ -1607,6 +1634,7 @@ export class FSEntryStore extends PuterStore {
                 throw new HttpError(
                     409,
                     `Batch contains duplicate target path: ${normalizedEntry.targetPath}`,
+                    { legacyCode: 'conflict' },
                 );
             }
             duplicatePathSet.add(dedupeKey);
@@ -1667,12 +1695,14 @@ export class FSEntryStore extends PuterStore {
                         throw new HttpError(
                             409,
                             `Entry already exists at ${entry.targetPath}`,
+                            { legacyCode: 'conflict' },
                         );
                     }
                     if (existingEntry.isDir) {
                         throw new HttpError(
                             409,
                             `Cannot overwrite a directory at ${entry.targetPath}`,
+                            { legacyCode: 'cannot_overwrite_a_directory' },
                         );
                     }
 
@@ -1836,8 +1866,14 @@ export class FSEntryStore extends PuterStore {
                         );
                     }
 
+                    // Use INSERT IGNORE so a row that lost the (parent_id,
+                    // name) race against another writer doesn't take down
+                    // the whole chunk. Skipped rows are recovered below by
+                    // detecting uuids missing from the post-INSERT SELECT
+                    // and running the same overwrite-or-409 logic the
+                    // upfront existence check uses.
                     await this.clients.db.write(
-                        `INSERT INTO fsentries (
+                        `${this.#insertIgnoreIntoFsentriesSql()} (
                             uuid,
                             bucket,
                             bucket_region,
@@ -1906,6 +1942,135 @@ export class FSEntryStore extends PuterStore {
                         );
                     }
                 }
+            }
+
+            // Recovery for INSERT IGNORE skips. An insertCandidate whose
+            // uuid is missing from the post-INSERT SELECT lost the
+            // (parent_id, name) race against a concurrent writer. Re-check
+            // primary-aware and either UPDATE (overwrite=true) or surface
+            // a clear 409. Other rows in the batch already persisted.
+            const racedCandidates = insertCandidates.filter(
+                (entry) => !insertedEntriesByUuid.has(entry.input.uuid),
+            );
+            const insertConflictErrors: Error[] = [];
+            if (racedCandidates.length > 0) {
+                const racedExistingByPath =
+                    await this.#readEntriesByPathsForUser(
+                        userId,
+                        racedCandidates.map((entry) => entry.targetPath),
+                        { useTryHardRead: true, skipCache: true },
+                    );
+                for (const entry of racedCandidates) {
+                    const parentEntry = parentByPath.get(entry.parentPath);
+                    if (!parentEntry) {
+                        throw new Error(
+                            `Failed to resolve parent directory for ${entry.targetPath}`,
+                        );
+                    }
+                    const existing = racedExistingByPath.get(entry.targetPath);
+                    if (!existing) {
+                        insertConflictErrors.push(
+                            new HttpError(
+                                409,
+                                `Entry already exists at ${entry.targetPath}`,
+                                { legacyCode: 'conflict' },
+                            ),
+                        );
+                        continue;
+                    }
+                    if (existing.isDir) {
+                        insertConflictErrors.push(
+                            new HttpError(
+                                409,
+                                `Cannot overwrite a directory at ${entry.targetPath}`,
+                                { legacyCode: 'cannot_overwrite_a_directory' },
+                            ),
+                        );
+                        continue;
+                    }
+                    if (!entry.input.overwrite) {
+                        insertConflictErrors.push(
+                            new HttpError(
+                                409,
+                                `Entry already exists at ${entry.targetPath}`,
+                                { legacyCode: 'conflict' },
+                            ),
+                        );
+                        continue;
+                    }
+
+                    const updatedEntry: FSEntry = {
+                        ...existing,
+                        bucket: entry.bucket,
+                        bucketRegion: entry.bucketRegion,
+                        parentId: parentEntry.id,
+                        parentUid: parentEntry.uuid,
+                        associatedAppId: entry.input.associatedAppId ?? null,
+                        isPublic:
+                            entry.input.isPublic === undefined
+                                ? null
+                                : Boolean(entry.input.isPublic),
+                        thumbnail: entry.input.thumbnail ?? null,
+                        immutable: Boolean(entry.input.immutable),
+                        name: entry.fileName,
+                        path: entry.targetPath,
+                        metadata: entry.metadataJson,
+                        modified: now,
+                        accessed: now,
+                        size: entry.size,
+                    };
+                    await this.clients.db.write(
+                        `UPDATE fsentries
+                         SET bucket = ?,
+                             bucket_region = ?,
+                             parent_id = ?,
+                             parent_uid = ?,
+                             associated_app_id = ?,
+                             is_public = ?,
+                             thumbnail = ?,
+                             immutable = ?,
+                             name = ?,
+                             path = ?,
+                             metadata = ?,
+                             modified = ?,
+                             accessed = ?,
+                             size = ?
+                         WHERE id = ?`,
+                        [
+                            entry.bucket,
+                            entry.bucketRegion,
+                            parentEntry.id,
+                            parentEntry.uuid,
+                            entry.input.associatedAppId ?? null,
+                            entry.input.isPublic === undefined
+                                ? null
+                                : entry.input.isPublic
+                                  ? 1
+                                  : 0,
+                            entry.input.thumbnail ?? null,
+                            entry.input.immutable ? 1 : 0,
+                            entry.fileName,
+                            entry.targetPath,
+                            entry.metadataJson,
+                            now,
+                            now,
+                            entry.size,
+                            existing.id,
+                        ],
+                    );
+                    await this.#invalidateEntryCache(existing);
+                    await this.#writeEntryToCache(updatedEntry);
+                    updatedResultsByIndex.set(entry.index, updatedEntry);
+                }
+            }
+
+            if (insertConflictErrors.length > 0) {
+                // Other rows in this user's batch already persisted (the
+                // INSERT IGNORE landed them and overwrite=true racers ran
+                // UPDATE above). Surface the first non-recoverable conflict
+                // as a clean 409 instead of letting ER_DUP_ENTRY escape
+                // through SQLBatcher as a 500.
+                throw insertConflictErrors[0]!;
             }
 
             for (const entry of userEntries) {
@@ -2158,7 +2323,9 @@ export class FSEntryStore extends PuterStore {
         )) as unknown as FSEntryRow[];
         const row = rows[0];
         if (!row) {
-            throw new HttpError(500, 'Failed to read created entry');
+            throw new HttpError(500, 'Failed to read created entry', {
+                legacyCode: 'internal_error',
+            });
         }
         const entry = this.#mapFSEntryRow(row);
         await this.#writeEntryToCache(entry);
@@ -2202,7 +2369,10 @@ export class FSEntryStore extends PuterStore {
             [...values, uuid],
         );
         const entry = await this.getEntryByUuid(uuid);
-        if (!entry) throw new HttpError(404, 'Entry not found after touch');
+        if (!entry)
+            throw new HttpError(404, 'Entry not found after touch', {
+                legacyCode: 'not_found',
+            });
         await this.#invalidateEntryCache(entry);
         await this.#writeEntryToCache(entry);
         return entry;
@@ -2280,7 +2450,9 @@ export class FSEntryStore extends PuterStore {
         const normalizedPrefix = this.#normalizePath(pathPrefix);
         if (normalizedPrefix === '/') {
             // Refuse to list all user entries this way — caller must mean something else.
-            throw new HttpError(400, 'Refusing to list descendants of root');
+            throw new HttpError(400, 'Refusing to list descendants of root', {
+                legacyCode: 'bad_request',
+            });
         }
         const likePattern = `${this.#escapeLikePattern(normalizedPrefix)}/%`;
         const rows = (await this.clients.db.read(
@@ -2400,7 +2572,10 @@ export class FSEntryStore extends PuterStore {
 
         if (assignments.length === 0) {
             const existing = await this.getEntryByUuid(uuid);
-            if (!existing) throw new HttpError(404, 'Entry not found');
+            if (!existing)
+                throw new HttpError(404, 'Entry not found', {
+                    legacyCode: 'not_found',
+                });
             return existing;
         }
 
@@ -2415,7 +2590,9 @@ export class FSEntryStore extends PuterStore {
         )) as unknown as FSEntryRow[];
         const row = refreshedRows[0];
         if (!row) {
-            throw new HttpError(404, 'Entry not found after update');
+            throw new HttpError(404, 'Entry not found after update', {
+                legacyCode: 'not_found',
+            });
         }
         const updated = this.#mapFSEntryRow(row);
         await this.#invalidateEntryCache(updated);
@@ -2508,7 +2685,11 @@ export class FSEntryStore extends PuterStore {
         const normalizedOld = this.#normalizePath(oldPrefix);
         const normalizedNew = this.#normalizePath(newPrefix);
         if (normalizedOld === '/' || normalizedNew === '/') {
-            throw new HttpError(400, 'Cannot rewrite path prefix to/from root');
+            throw new HttpError(
+                400,
+                'Cannot rewrite path prefix to/from root',
+                { legacyCode: 'bad_request' },
+            );
         }
         if (normalizedOld === normalizedNew) return 0;
 

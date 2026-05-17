@@ -57,8 +57,9 @@ export type RoutePath = string | RegExp | Array<string | RegExp>;
  * The materializer (`v2/server.ts#materializeRoute`) translates these into a
  * middleware chain in this order:
  *
- *     subdomain → requireAuth (+ suspended) → requireUserActor →
- *     adminOnly → allowedAppIds → caller `middleware: []` → handler
+ *     subdomain → requireAuth (+ suspended) → emailConfirmed →
+ *     requireUserActor → adminOnly → allowedAppIds →
+ *     caller `middleware: []` → handler
  *
  * `requireUserActor`, `adminOnly`, and `allowedAppIds` all imply
  * `requireAuth`; the materializer dedupes so only one auth gate ends up
@@ -79,11 +80,14 @@ export interface RouteOptions {
      */
     subdomain?: string | string[];
 
-    /** Reject anonymous + suspended-user requests with 401/403. */
+    /** Reject anonymous + suspended-user requests with 401/403. Only allows user and app actors */
     requireAuth?: boolean;
 
     /** Reject app/access-token actors. Implies `requireAuth`. */
     requireUserActor?: boolean;
+
+    /** Allows access-tokens */
+    allowAccessToken?: boolean;
 
     /**
      * Reject unless the actor's username is `admin`, `system`, or one of the
@@ -98,6 +102,19 @@ export interface RouteOptions {
 
     /** Reject unless the actor is acting through one of these apps. Implies `requireAuth`. */
     allowedAppIds?: string[];
+
+    /**
+     * Allow users whose account is pending email confirmation to access
+     * this route. By default, any authenticated route rejects users where
+     * `requires_email_confirmation && !email_confirmed` with 403. Set
+     * this to `true` on essential flows that must remain accessible
+     * before confirmation: logout, email-confirm, whoami, save-account,
+     * anti-CSRF token, etc.
+     *
+     * Only meaningful when the route also requires authentication (via
+     * `requireAuth`, `requireUserActor`, `adminOnly`, or `allowedAppIds`).
+     */
+    allowUnconfirmed?: boolean;
 
     /**
      * Reject unless the actor's user has a confirmed email. 400 with
@@ -176,12 +193,52 @@ export interface RouteOptions {
      * `scope` is an optional namespace prefix to isolate counters
      * between routes that share the same key strategy. Defaults to
      * the route path.
+     *
+     * `backend` selects the storage backend ('memory' / 'redis' / 'kv').
+     * All registered backends stay co-resident at runtime, so different
+     * routes can pick whichever fits their access pattern. Omitting
+     * `backend` uses the server-wide default (`config.rate_limit.backend`).
      */
     rateLimit?: {
         limit: number;
         window: number;
+        /**
+         * Per-subscription overrides for `limit` (`SubscriptionPolicy.id`
+         * → cap). Same mechanic as `concurrent.bySubscription`: resolved
+         * via the metering service per request; falls back to the base
+         * `limit` when there's no actor / no metering / no match.
+         */
+        bySubscription?: Record<string, number>;
         key?: 'fingerprint' | 'ip' | 'user' | ((req: Request) => string);
         scope?: string;
+        backend?: 'memory' | 'redis' | 'kv';
+    };
+
+    /**
+     * Concurrent in-flight limiting. Caps how many requests for this
+     * key are simultaneously in flight, rather than how many fire per
+     * window. A slot is acquired before the handler runs and released
+     * on `res.finish` / `res.close` — aborted requests still give their
+     * slot back.
+     *
+     *   { concurrent: { limit: 5, key: 'user' } }
+     *   { concurrent: { limit: 5, bySubscription: { user_free: 2 } } }
+     *
+     * `bySubscription` overrides the base `limit` per subscription tier
+     * (`SubscriptionPolicy.id`) — `user_free`, `temp_free`, `unlimited`
+     * out of the box. Requires the metering service to be wired into
+     * the rate-limit module (`configureRateLimit({ metering: ... })`)
+     * and an authenticated actor; otherwise the base `limit` applies.
+     *
+     * `key`, `scope`, `backend` parallel the `rateLimit` option exactly;
+     * there's no `window` — that's the whole point of the second gate.
+     */
+    concurrent?: {
+        limit: number;
+        bySubscription?: Record<string, number>;
+        key?: 'fingerprint' | 'ip' | 'user' | ((req: Request) => string);
+        scope?: string;
+        backend?: 'memory' | 'redis' | 'kv';
     };
 
     // Reserved — wire as the corresponding features/services land:
